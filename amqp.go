@@ -24,6 +24,8 @@ func Dial(dsn string) *Client {
 	return clt
 }
 
+type Delivery = amqp.Delivery
+
 func (clt *Client) getSession() (*Session, error) {
 	c, err := amqp.Dial(clt.dsn)
 	if err != nil {
@@ -46,23 +48,19 @@ type AutoReconnecter interface {
 
 type Sub struct {
 	clt        *Client
-	opt        Opt
+	exchange   string
 	queue      string
 	routing    string
-	callbackFn func(amqp.Delivery)
+	callbackFn func(Delivery)
 }
 
-type Opt struct {
-	Exchange string
-	Kind     string
-}
-
-func (clt *Client) Sub(queue, routing string, opt Opt, fn func(amqp.Delivery)) {
+func (clt *Client) Sub(queue, exchange, routing string, fn func(Delivery)) {
 	rev := &Sub{
-		opt:        opt,
+		exchange:   exchange,
 		queue:      queue,
 		clt:        clt,
 		callbackFn: fn,
+		routing:    routing,
 	}
 	go rev.reconnect()
 }
@@ -91,8 +89,9 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 		return err
 	}
 	// 绑定队列到交换机 以便从指定交换机获取数据
+	fmt.Println(sub.routing)
 	if err := ch.QueueBind(
-		sub.queue, sub.routing, sub.opt.Exchange, false, nil,
+		sub.queue, sub.routing, sub.exchange, false, nil,
 	); err != nil {
 		ch.Close()
 		return err
@@ -110,17 +109,19 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 }
 
 type Pub struct {
-	clt     *Client
-	session chan *Session
-	opt     Opt
+	clt      *Client
+	session  chan *Session
+	exchange string
+	kind     string
 }
 
-func (clt *Client) Pub(opt Opt) (*Pub, error) {
+func (clt *Client) Pub(exchange, kind string) (*Pub, error) {
 	maxidle := 3
 	pub := &Pub{
-		clt:     clt,
-		session: make(chan *Session, maxidle),
-		opt:     opt,
+		clt:      clt,
+		session:  make(chan *Session, maxidle),
+		exchange: exchange,
+		kind:     kind,
 	}
 	for i := 0; i < maxidle; i++ {
 		s, err := pub.reconnect()
@@ -138,11 +139,11 @@ func (pub *Pub) reconnect() (*Session, error) {
 		return nil, err
 	}
 	if err = sess.ch.ExchangeDeclare(
-		pub.opt.Exchange, pub.opt.Kind, true, false, false, false, nil); err != nil {
+		pub.exchange, pub.kind, true, false, false, false, nil); err != nil {
 		sess.conn.Close()
 		sess = nil
 	}
-	return sess, nil
+	return sess, err
 
 }
 
@@ -154,6 +155,7 @@ func (pub *Pub) Push(routing string, data []byte) error {
 			// 就从超时里重新获取 还是失败返回错误
 			err := pub.pushaction(s, routing, data)
 			if err != nil {
+				fmt.Println(err)
 				s.ch.Close()
 				s.conn.Close()
 				continue
@@ -187,7 +189,7 @@ func (pub *Pub) putSession(s *Session) {
 
 func (pub *Pub) pushaction(s *Session, routing string, data []byte) error {
 	return s.ch.Publish(
-		pub.opt.Exchange, routing, false, false,
+		pub.exchange, routing, false, false,
 		amqp.Publishing{
 			Headers:      amqp.Table{},
 			Body:         data,
