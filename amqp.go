@@ -74,37 +74,43 @@ func (sub *Sub) reconnect() {
 				continue
 			}
 		}
-		fmt.Println(err)
 		time.Sleep(time.Second * 2)
 	}
 }
 
 func (sub *Sub) bind(ch *amqp.Channel) error {
+	defer ch.Close()
 	// 声明队列，如果队列不存在则创建
 	// 默认durable=true 持久化存储
 	if _, err := ch.QueueDeclare(
 		sub.queue, true, false, false, false, nil,
 	); err != nil {
-		ch.Close()
 		return err
 	}
 	// 绑定队列到交换机 以便从指定交换机获取数据
-	fmt.Println(sub.routing)
 	if err := ch.QueueBind(
 		sub.queue, sub.routing, sub.exchange, false, nil,
 	); err != nil {
-		ch.Close()
 		return err
 	}
 	msgs, err := ch.Consume(sub.queue, os.Args[0], false, false, false, false, nil)
 	if err != nil {
-		ch.Close()
 		return err
 	}
-	for msg := range msgs {
-		sub.callbackFn(msg)
+loop:
+	for {
+		select {
+		case msg, ok := <-msgs:
+			if !ok {
+				break loop
+			}
+			sub.callbackFn(msg)
+		case <-time.After(time.Second * 30):
+			// 超过30秒收不到任何消息 重新连接下
+			// 因为exchange被删或者其他并不会触发 导致一直获取不到消息
+			break
+		}
 	}
-	ch.Close()
 	return nil
 }
 
@@ -144,7 +150,6 @@ func (pub *Pub) reconnect() (*Session, error) {
 		sess = nil
 	}
 	return sess, err
-
 }
 
 func (pub *Pub) Push(routing string, data []byte) error {
@@ -155,14 +160,13 @@ func (pub *Pub) Push(routing string, data []byte) error {
 			// 就从超时里重新获取 还是失败返回错误
 			err := pub.pushaction(s, routing, data)
 			if err != nil {
-				fmt.Println(err)
 				s.ch.Close()
 				s.conn.Close()
 				continue
 			}
 			pub.putSession(s)
 			return nil
-		case <-time.After(time.Second):
+		case <-time.After(time.Second * 2):
 			s, err := pub.reconnect()
 			if err != nil {
 				return err
@@ -173,7 +177,6 @@ func (pub *Pub) Push(routing string, data []byte) error {
 				return err
 			}
 			pub.putSession(s)
-			return nil
 		}
 	}
 }
@@ -184,6 +187,7 @@ func (pub *Pub) putSession(s *Session) {
 	default:
 		s.ch.Close()
 		s.conn.Close()
+		fmt.Println("full")
 	}
 }
 
