@@ -24,7 +24,21 @@ func Dial(dsn string) *Client {
 	return clt
 }
 
-type Delivery = amqp.Delivery
+type Delivery struct {
+	amqp.Delivery
+}
+
+func (d Delivery) GetBody() []byte {
+	return d.Body
+}
+
+func (d Delivery) Accpet(flag bool) {
+	if flag {
+		d.Ack(false)
+	} else {
+		d.Nack(false, false)
+	}
+}
 
 func (clt *Client) getSession() (*Session, error) {
 	c, err := amqp.Dial(clt.dsn)
@@ -47,22 +61,23 @@ type AutoReconnecter interface {
 }
 
 type Sub struct {
-	clt        *Client
-	exchange   string
-	queue      string
-	routing    string
-	callbackFn func(Delivery)
+	clt      *Client
+	exchange string
+	queue    string
+	routing  string
+	msgchan  chan Delivery
 }
 
-func (clt *Client) Sub(queue, exchange, routing string, fn func(Delivery)) {
+func (clt *Client) Sub(queue, exchange, routing string) *Sub {
 	rev := &Sub{
-		exchange:   exchange,
-		queue:      queue,
-		clt:        clt,
-		callbackFn: fn,
-		routing:    routing,
+		exchange: exchange,
+		queue:    queue,
+		clt:      clt,
+		routing:  routing,
+		msgchan:  make(chan Delivery),
 	}
 	go rev.reconnect()
+	return rev
 }
 
 func (sub *Sub) reconnect() {
@@ -76,6 +91,10 @@ func (sub *Sub) reconnect() {
 		}
 		time.Sleep(time.Second * 2)
 	}
+}
+
+func (sub *Sub) GetMessages() <-chan Delivery {
+	return sub.msgchan
 }
 
 func (sub *Sub) bind(ch *amqp.Channel) error {
@@ -104,7 +123,7 @@ loop:
 			if !ok {
 				break loop
 			}
-			sub.callbackFn(msg)
+			sub.msgchan <- Delivery{msg}
 		case <-time.After(time.Second * 30):
 			// 超过30秒收不到任何消息 重新连接下
 			// 因为exchange被删或者其他并不会触发 导致一直获取不到消息
