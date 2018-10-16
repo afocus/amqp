@@ -36,7 +36,7 @@ func (d Delivery) Accpet(flag bool) {
 	if flag {
 		d.Ack(false)
 	} else {
-		d.Nack(false, false)
+		d.Nack(false, true)
 	}
 }
 
@@ -65,7 +65,7 @@ type Sub struct {
 	exchange string
 	queue    string
 	routing  string
-	msgchan  chan Delivery
+	msgchan  chan interface{}
 }
 
 func (clt *Client) Sub(queue, exchange, routing string) *Sub {
@@ -74,7 +74,7 @@ func (clt *Client) Sub(queue, exchange, routing string) *Sub {
 		queue:    queue,
 		clt:      clt,
 		routing:  routing,
-		msgchan:  make(chan Delivery),
+		msgchan:  make(chan interface{}),
 	}
 	go rev.reconnect()
 	return rev
@@ -89,11 +89,14 @@ func (sub *Sub) reconnect() {
 				continue
 			}
 		}
+		if err != nil {
+			sub.msgchan <- err
+		}
 		time.Sleep(time.Second * 2)
 	}
 }
 
-func (sub *Sub) GetMessages() <-chan Delivery {
+func (sub *Sub) GetMessages() <-chan interface{} {
 	return sub.msgchan
 }
 
@@ -123,7 +126,7 @@ loop:
 			if !ok {
 				break loop
 			}
-			sub.msgchan <- Delivery{msg}
+			sub.msgchan <- &Delivery{msg}
 		case <-time.After(time.Second * 30):
 			// 超过30秒收不到任何消息 重新连接下
 			// 因为exchange被删或者其他并不会触发 导致一直获取不到消息

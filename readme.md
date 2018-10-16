@@ -11,9 +11,14 @@
 
 mq := amqp.Dial("amqp://guest:guest@127.0.0.1:5672")
 msgs := mq.Sub("myqueue", "myexchange", "routingkey").GetMessages()
-for msg:=range msgs{
-    fmt.Println(msg.GetBody())
-    msg.Accpet(true)
+for msg := range msgs {
+    switch a := msg.(type) {
+    case *amqp.Delivery:
+        fmt.Println(string(a.Body) + "\n")
+        a.Accpet(true)
+    case error:
+        fmt.Println(msg)
+    }
 }
 ```
 
