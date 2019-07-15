@@ -32,12 +32,11 @@ func (d Delivery) GetBody() []byte {
 	return d.Body
 }
 
-func (d Delivery) Accpet(flag bool) {
+func (d Delivery) Accpet(flag bool) error {
 	if flag {
-		d.Ack(false)
-	} else {
-		d.Nack(false, true)
+		return d.Ack(false)
 	}
+	return d.Nack(false, true)
 }
 
 func (clt *Client) getSession() (*Session, error) {
@@ -62,6 +61,7 @@ type AutoReconnecter interface {
 
 type Sub struct {
 	clt      *Client
+	qos      int
 	exchange string
 	queue    string
 	routing  string
@@ -96,6 +96,12 @@ func (sub *Sub) reconnect() {
 	}
 }
 
+func (sub *Sub) Qos(count int) {
+	if count > 0 {
+		sub.qos = count
+	}
+}
+
 func (sub *Sub) GetMessages() <-chan interface{} {
 	return sub.msgchan
 }
@@ -114,6 +120,9 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 		sub.queue, sub.routing, sub.exchange, false, nil,
 	); err != nil {
 		return err
+	}
+	if sub.qos > 0 {
+		ch.Qos(sub.qos, 0, false)
 	}
 	msgs, err := ch.Consume(sub.queue, os.Args[0], false, false, false, false, nil)
 	if err != nil {
