@@ -59,22 +59,31 @@ type AutoReconnecter interface {
 	Reconnect() (*amqp.Channel, error)
 }
 
+type Exchange struct {
+	Name       string
+	RoutingKey string
+}
 type Sub struct {
-	clt      *Client
-	qos      int
-	exchange string
-	queue    string
-	routing  string
-	msgchan  chan interface{}
+	clt       *Client
+	qos       int
+	exchanges []Exchange
+	queue     string
+	msgchan   chan interface{}
 }
 
 func (clt *Client) Sub(queue, exchange, routing string) *Sub {
+	return clt.Subs(queue, []Exchange{{Name: exchange, RoutingKey: routing}})
+}
+
+func (clt *Client) Subs(queue string, exchanges []Exchange) *Sub {
+	if exchanges == nil || len(exchanges) == 0 {
+		panic("")
+	}
 	rev := &Sub{
-		exchange: exchange,
-		queue:    queue,
-		clt:      clt,
-		routing:  routing,
-		msgchan:  make(chan interface{}),
+		exchanges: exchanges,
+		queue:     queue,
+		clt:       clt,
+		msgchan:   make(chan interface{}),
 	}
 	go rev.reconnect()
 	return rev
@@ -115,11 +124,13 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 	); err != nil {
 		return err
 	}
-	// 绑定队列到交换机 以便从指定交换机获取数据
-	if err := ch.QueueBind(
-		sub.queue, sub.routing, sub.exchange, false, nil,
-	); err != nil {
-		return err
+	for _, ext := range sub.exchanges {
+		// 绑定队列到交换机 以便从指定交换机获取数据
+		if err := ch.QueueBind(
+			sub.queue, ext.RoutingKey, ext.Name, false, nil,
+		); err != nil {
+			return err
+		}
 	}
 	if sub.qos > 0 {
 		ch.Qos(sub.qos, 0, false)
