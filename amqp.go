@@ -93,8 +93,9 @@ func (sub *Sub) reconnect() {
 	for {
 		sess, err := sub.clt.getSession()
 		if err == nil {
-			if err = sub.bind(sess.ch); err == nil {
-				sess.conn.Close()
+			err = sub.bind(sess.ch)
+			sess.conn.Close()
+			if err == nil {
 				continue
 			}
 		}
@@ -139,21 +140,19 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 	if err != nil {
 		return err
 	}
-loop:
 	for {
 		select {
 		case msg, ok := <-msgs:
 			if !ok {
-				break loop
+				return nil
 			}
 			sub.msgchan <- &Delivery{msg}
-		case <-time.After(time.Second * 30):
-			// 超过30秒收不到任何消息 重新连接下
+		case <-time.After(time.Second * 300):
+			// 超过300秒收不到任何消息 重新连接下
 			// 因为exchange被删或者其他并不会触发 导致一直获取不到消息
-			break
+			return nil
 		}
 	}
-	return nil
 }
 
 type Pub struct {
@@ -194,13 +193,13 @@ func (pub *Pub) reconnect() (*Session, error) {
 	return sess, err
 }
 
-func (pub *Pub) Push(routing string, data []byte) error {
+func (pub *Pub) push(exchange, routing string, data []byte) error {
 	for {
 		select {
 		case s := <-pub.session:
 			// 一直取session 直到取不到
 			// 就从超时里重新获取 还是失败返回错误
-			err := pub.pushaction(s, routing, data)
+			err := pub.pushaction(s, exchange, routing, data)
 			if err != nil {
 				s.ch.Close()
 				s.conn.Close()
@@ -213,7 +212,7 @@ func (pub *Pub) Push(routing string, data []byte) error {
 			if err != nil {
 				return err
 			}
-			if err := pub.pushaction(s, routing, data); err != nil {
+			if err := pub.pushaction(s, exchange, routing, data); err != nil {
 				s.ch.Close()
 				s.conn.Close()
 				return err
@@ -221,6 +220,14 @@ func (pub *Pub) Push(routing string, data []byte) error {
 			pub.putSession(s)
 		}
 	}
+}
+
+func (pub *Pub) Push(routing string, data []byte) error {
+	return pub.push(pub.exchange, routing, data)
+}
+
+func (pub *Pub) PushToQueue(queue string, data []byte) error {
+	return pub.push("", queue, data)
 }
 
 func (pub *Pub) putSession(s *Session) {
@@ -233,9 +240,9 @@ func (pub *Pub) putSession(s *Session) {
 	}
 }
 
-func (pub *Pub) pushaction(s *Session, routing string, data []byte) error {
+func (pub *Pub) pushaction(s *Session, exchange, routing string, data []byte) error {
 	return s.ch.Publish(
-		pub.exchange, routing, false, false,
+		exchange, routing, false, false,
 		amqp.Publishing{
 			Headers:      amqp.Table{},
 			Body:         data,
