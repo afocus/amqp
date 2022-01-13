@@ -76,9 +76,6 @@ func (clt *Client) Sub(queue, exchange, routing string) *Sub {
 }
 
 func (clt *Client) Subs(queue string, exchanges []Exchange) *Sub {
-	if exchanges == nil || len(exchanges) == 0 {
-		panic("")
-	}
 	rev := &Sub{
 		exchanges: exchanges,
 		queue:     queue,
