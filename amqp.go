@@ -28,6 +28,8 @@ type Delivery struct {
 	amqp.Delivery
 }
 
+type Publishing amqp.Publishing
+
 func (d Delivery) GetBody() []byte {
 	return d.Body
 }
@@ -131,7 +133,7 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 		}
 	}
 	if sub.qos > 0 {
-		ch.Qos(sub.qos, 0, false)
+		_ = ch.Qos(sub.qos, 0, false)
 	}
 	msgs, err := ch.Consume(sub.queue, os.Args[0], false, false, false, false, nil)
 	if err != nil {
@@ -190,7 +192,7 @@ func (pub *Pub) reconnect() (*Session, error) {
 	return sess, err
 }
 
-func (pub *Pub) push(exchange, routing string, data []byte) error {
+func (pub *Pub) push(exchange, routing string, data Publishing) error {
 	for {
 		select {
 		case s := <-pub.session:
@@ -220,11 +222,21 @@ func (pub *Pub) push(exchange, routing string, data []byte) error {
 }
 
 func (pub *Pub) Push(routing string, data []byte) error {
-	return pub.push(pub.exchange, routing, data)
+	return pub.push(pub.exchange, routing, Publishing{
+		Body:     data,
+		Priority: 0, // 0-9
+	})
 }
 
 func (pub *Pub) PushToQueue(queue string, data []byte) error {
-	return pub.push("", queue, data)
+	return pub.push("", queue, Publishing{
+		Body:     data,
+		Priority: 0, // 0-9
+	})
+}
+
+func (pub *Pub) PusbPlus(routing string, data Publishing) error {
+	return pub.push(pub.exchange, routing, data)
 }
 
 func (pub *Pub) putSession(s *Session) {
@@ -237,14 +249,10 @@ func (pub *Pub) putSession(s *Session) {
 	}
 }
 
-func (pub *Pub) pushaction(s *Session, exchange, routing string, data []byte) error {
+func (pub *Pub) pushaction(s *Session, exchange, routing string, data Publishing) error {
+	data.Headers = amqp.Table{}
+	data.DeliveryMode = amqp.Persistent
 	return s.ch.Publish(
-		exchange, routing, false, false,
-		amqp.Publishing{
-			Headers:      amqp.Table{},
-			Body:         data,
-			DeliveryMode: amqp.Persistent, // 1=non-persistent, 2=persistent
-			Priority:     0,               // 0-9
-		},
+		exchange, routing, false, false, amqp.Publishing(data),
 	)
 }
