@@ -235,7 +235,7 @@ func (pub *Pub) PushToQueue(queue string, data []byte) error {
 	})
 }
 
-func (pub *Pub) PusbPlus(routing string, data Publishing) error {
+func (pub *Pub) PubPlus(routing string, data Publishing) error {
 	return pub.push(pub.exchange, routing, data)
 }
 
