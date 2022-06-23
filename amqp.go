@@ -250,7 +250,9 @@ func (pub *Pub) putSession(s *Session) {
 }
 
 func (pub *Pub) pushaction(s *Session, exchange, routing string, data Publishing) error {
-	data.Headers = amqp.Table{}
+	if data.Headers == nil {
+		data.Headers = amqp.Table{}
+	}
 	data.DeliveryMode = amqp.Persistent
 	return s.ch.Publish(
 		exchange, routing, false, false, amqp.Publishing(data),
