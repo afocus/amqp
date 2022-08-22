@@ -239,6 +239,17 @@ func (pub *Pub) PubPlus(routing string, data Publishing) error {
 	return pub.push(pub.exchange, routing, data)
 }
 
+func (pub *Pub) PubWithTrace(routing string, data []byte, traceid, spanid string) error {
+	h := amqp.Table{}
+	h["TraceID"] = traceid
+	h["SpanID"] = spanid
+	return pub.push(pub.exchange, routing, Publishing{
+		Body:     data,
+		Headers:  h,
+		Priority: 0, // 0-9
+	})
+}
+
 func (pub *Pub) putSession(s *Session) {
 	select {
 	case pub.session <- s:
