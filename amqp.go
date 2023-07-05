@@ -157,9 +157,10 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 				return nil
 			}
 			sub.msgchan <- &Delivery{msg}
-		case <-time.After(time.Second * 300):
-			// 超过300秒收不到任何消息 重新连接下
+		case <-time.After(time.Second * 1800):
+			// 超过1800秒收不到任何消息 重新连接下
 			// 因为exchange被删或者其他并不会触发 导致一直获取不到消息
+			ch.Close()
 			return nil
 		}
 	}
