@@ -71,6 +71,7 @@ type Sub struct {
 	exchanges []Exchange
 	queue     string
 	msgchan   chan interface{}
+	temp      bool
 }
 
 func (clt *Client) Sub(queue, exchange, routing string) *Sub {
@@ -86,6 +87,10 @@ func (clt *Client) Subs(queue string, exchanges []Exchange) *Sub {
 	}
 	go rev.reconnect()
 	return rev
+}
+
+func (sub *Sub) SetTemp(v bool) {
+	sub.temp = true
 }
 
 func (sub *Sub) reconnect() {
@@ -119,8 +124,14 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 	defer ch.Close()
 	// 声明队列，如果队列不存在则创建
 	// 默认durable=true 持久化存储
+	var autodel bool
+	var durable = true
+	if sub.temp {
+		autodel = true
+		durable = false
+	}
 	if _, err := ch.QueueDeclare(
-		sub.queue, true, false, false, false, nil,
+		sub.queue, durable, autodel, false, false, nil,
 	); err != nil {
 		return err
 	}
@@ -250,7 +261,9 @@ func (pub *Pub) putSession(s *Session) {
 }
 
 func (pub *Pub) pushaction(s *Session, exchange, routing string, data Publishing) error {
-	data.Headers = amqp.Table{}
+	if data.Headers == nil {
+		data.Headers = amqp.Table{}
+	}
 	data.DeliveryMode = amqp.Persistent
 	return s.ch.Publish(
 		exchange, routing, false, false, amqp.Publishing(data),
