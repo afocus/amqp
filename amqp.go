@@ -3,6 +3,7 @@ package amqp
 import (
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/streadway/amqp"
@@ -71,7 +72,12 @@ type Sub struct {
 	exchanges []Exchange
 	queue     string
 	msgchan   chan interface{}
-	temp      bool
+	// 临时  durable:false, autodelete:true
+	temp bool
+	// 排他 exclusive:true
+	exclusive   bool
+	idleTimeout time.Duration
+	_started    int32
 }
 
 func (clt *Client) Sub(queue, exchange, routing string) *Sub {
@@ -85,12 +91,19 @@ func (clt *Client) Subs(queue string, exchanges []Exchange) *Sub {
 		clt:       clt,
 		msgchan:   make(chan interface{}),
 	}
-	go rev.reconnect()
 	return rev
 }
 
 func (sub *Sub) SetTemp(v bool) {
 	sub.temp = true
+}
+
+func (sub *Sub) SetExclusive(v bool) {
+	sub.exclusive = v
+}
+
+func (sub *Sub) SetIdleTimeout(d time.Duration) {
+	sub.idleTimeout = d
 }
 
 func (sub *Sub) reconnect() {
@@ -117,6 +130,9 @@ func (sub *Sub) Qos(count int) {
 }
 
 func (sub *Sub) GetMessages() <-chan interface{} {
+	if atomic.CompareAndSwapInt32(&sub._started, 0, 1) {
+		go sub.reconnect()
+	}
 	return sub.msgchan
 }
 
@@ -131,7 +147,7 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 		durable = false
 	}
 	if _, err := ch.QueueDeclare(
-		sub.queue, durable, autodel, false, false, nil,
+		sub.queue, durable, autodel, sub.exclusive, false, nil,
 	); err != nil {
 		return err
 	}
@@ -150,18 +166,25 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 	if err != nil {
 		return err
 	}
-	for {
-		select {
-		case msg, ok := <-msgs:
-			if !ok {
+
+	if sub.idleTimeout <= 0 {
+		for msg := range msgs {
+			sub.msgchan <- &Delivery{msg}
+		}
+		return nil
+	} else {
+		for {
+			select {
+			case msg, ok := <-msgs:
+				if !ok {
+					return nil
+				}
+				sub.msgchan <- &Delivery{msg}
+			case <-time.After(sub.idleTimeout):
+				// 因为exchange被删或者其他并不会触发 导致一直获取不到消息
+				ch.Close()
 				return nil
 			}
-			sub.msgchan <- &Delivery{msg}
-		case <-time.After(time.Second * 1800):
-			// 超过1800秒收不到任何消息 重新连接下
-			// 因为exchange被删或者其他并不会触发 导致一直获取不到消息
-			ch.Close()
-			return nil
 		}
 	}
 }
@@ -234,17 +257,11 @@ func (pub *Pub) push(exchange, routing string, data Publishing) error {
 }
 
 func (pub *Pub) Push(routing string, data []byte) error {
-	return pub.push(pub.exchange, routing, Publishing{
-		Body:     data,
-		Priority: 0, // 0-9
-	})
+	return pub.push(pub.exchange, routing, Publishing{Body: data})
 }
 
-func (pub *Pub) PushToQueue(queue string, data []byte) error {
-	return pub.push("", queue, Publishing{
-		Body:     data,
-		Priority: 0, // 0-9
-	})
+func (pub *Pub) PushToQueue(queue string, data Publishing) error {
+	return pub.push("", queue, data)
 }
 
 func (pub *Pub) PubPlus(routing string, data Publishing) error {
