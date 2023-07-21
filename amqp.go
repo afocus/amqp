@@ -86,10 +86,11 @@ func (clt *Client) Sub(queue, exchange, routing string) *Sub {
 
 func (clt *Client) Subs(queue string, exchanges []Exchange) *Sub {
 	rev := &Sub{
-		exchanges: exchanges,
-		queue:     queue,
-		clt:       clt,
-		msgchan:   make(chan interface{}),
+		exchanges:   exchanges,
+		queue:       queue,
+		clt:         clt,
+		msgchan:     make(chan interface{}),
+		idleTimeout: time.Hour,
 	}
 	return rev
 }
