@@ -1,7 +1,6 @@
 package amqp
 
 import (
-	"fmt"
 	"os"
 	"sync/atomic"
 	"time"
@@ -205,13 +204,15 @@ func (clt *Client) Pub(exchange, kind string) (*Pub, error) {
 		exchange: exchange,
 		kind:     kind,
 	}
-	for i := 0; i < maxidle; i++ {
+	// init one
+	{
 		s, err := pub.reconnect()
 		if err != nil {
 			return nil, err
 		}
 		pub.putSession(s)
 	}
+
 	return pub, nil
 }
 
@@ -229,32 +230,24 @@ func (pub *Pub) reconnect() (*Session, error) {
 }
 
 func (pub *Pub) push(exchange, routing string, data Publishing) error {
-	for {
-		select {
-		case s := <-pub.session:
-			// 一直取session 直到取不到
-			// 就从超时里重新获取 还是失败返回错误
-			err := pub.pushaction(s, exchange, routing, data)
-			if err != nil {
-				s.ch.Close()
-				s.conn.Close()
-				continue
-			}
-			pub.putSession(s)
-			return nil
-		case <-time.After(time.Second * 2):
-			s, err := pub.reconnect()
-			if err != nil {
-				return err
-			}
-			if err := pub.pushaction(s, exchange, routing, data); err != nil {
-				s.ch.Close()
-				s.conn.Close()
-				return err
-			}
-			pub.putSession(s)
+	var ses *Session
+	select {
+	case s := <-pub.session:
+		ses = s
+	case <-time.After(time.Second * 3):
+		s, err := pub.reconnect()
+		if err != nil {
+			return err
 		}
+		ses = s
 	}
+	if err := pub.pushaction(ses, exchange, routing, data); err != nil {
+		ses.ch.Close()
+		ses.conn.Close()
+		return err
+	}
+	pub.putSession(ses)
+	return nil
 }
 
 func (pub *Pub) Push(routing string, data []byte) error {
@@ -275,7 +268,6 @@ func (pub *Pub) putSession(s *Session) {
 	default:
 		s.ch.Close()
 		s.conn.Close()
-		fmt.Println("full")
 	}
 }
 
