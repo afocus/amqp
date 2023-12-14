@@ -166,21 +166,23 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 	if err != nil {
 		return err
 	}
-
 	if sub.idleTimeout <= 0 {
 		for msg := range msgs {
 			sub.msgchan <- &Delivery{msg}
 		}
 		return nil
 	} else {
+		delay := time.NewTimer(sub.idleTimeout)
+		defer delay.Stop()
 		for {
+			delay.Reset(sub.idleTimeout)
 			select {
 			case msg, ok := <-msgs:
 				if !ok {
 					return nil
 				}
 				sub.msgchan <- &Delivery{msg}
-			case <-time.After(sub.idleTimeout):
+			case <-delay.C:
 				// 因为exchange被删或者其他并不会触发 导致一直获取不到消息
 				ch.Close()
 				return nil
