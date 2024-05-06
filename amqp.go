@@ -1,6 +1,8 @@
 package amqp
 
 import (
+	"context"
+	"errors"
 	"os"
 	"sync/atomic"
 	"time"
@@ -112,9 +114,6 @@ func (sub *Sub) reconnect() {
 		if err == nil {
 			err = sub.bind(sess.ch)
 			sess.conn.Close()
-			if err == nil {
-				continue
-			}
 		}
 		if err != nil {
 			sub.msgchan <- err
@@ -135,6 +134,8 @@ func (sub *Sub) GetMessages() <-chan interface{} {
 	}
 	return sub.msgchan
 }
+
+var errConsumeAutoClose = errors.New("consume auto close")
 
 func (sub *Sub) bind(ch *amqp.Channel) error {
 	defer ch.Close()
@@ -170,7 +171,7 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 		for msg := range msgs {
 			sub.msgchan <- &Delivery{msg}
 		}
-		return nil
+		return errConsumeAutoClose
 	} else {
 		delay := time.NewTimer(sub.idleTimeout)
 		defer delay.Stop()
@@ -179,12 +180,11 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 			select {
 			case msg, ok := <-msgs:
 				if !ok {
-					return nil
+					return errConsumeAutoClose
 				}
 				sub.msgchan <- &Delivery{msg}
 			case <-delay.C:
 				// 因为exchange被删或者其他并不会触发 导致一直获取不到消息
-				ch.Close()
 				return nil
 			}
 		}
@@ -231,9 +231,11 @@ func (pub *Pub) reconnect() (*Session, error) {
 	return sess, err
 }
 
-func (pub *Pub) push(exchange, routing string, data Publishing) error {
+func (pub *Pub) push(ctx context.Context, exchange, routing string, data Publishing) error {
 	var ses *Session
 	select {
+	case <-ctx.Done():
+		return ctx.Err()
 	case s := <-pub.session:
 		ses = s
 	case <-time.After(time.Second * 3):
@@ -243,7 +245,7 @@ func (pub *Pub) push(exchange, routing string, data Publishing) error {
 		}
 		ses = s
 	}
-	if err := pub.pushaction(ses, exchange, routing, data); err != nil {
+	if err := pub.pushaction(ctx, ses, exchange, routing, data); err != nil {
 		ses.ch.Close()
 		ses.conn.Close()
 		return err
@@ -253,15 +255,19 @@ func (pub *Pub) push(exchange, routing string, data Publishing) error {
 }
 
 func (pub *Pub) Push(routing string, data []byte) error {
-	return pub.push(pub.exchange, routing, Publishing{Body: data})
+	return pub.push(context.Background(), pub.exchange, routing, Publishing{Body: data})
 }
 
 func (pub *Pub) PushToQueue(queue string, data Publishing) error {
-	return pub.push("", queue, data)
+	return pub.push(context.Background(), "", queue, data)
 }
 
 func (pub *Pub) PubPlus(routing string, data Publishing) error {
-	return pub.push(pub.exchange, routing, data)
+	return pub.PubPlusWithContext(context.Background(), routing, data)
+}
+
+func (pub *Pub) PubPlusWithContext(ctx context.Context, routing string, data Publishing) error {
+	return pub.push(ctx, pub.exchange, routing, data)
 }
 
 func (pub *Pub) putSession(s *Session) {
@@ -273,12 +279,13 @@ func (pub *Pub) putSession(s *Session) {
 	}
 }
 
-func (pub *Pub) pushaction(s *Session, exchange, routing string, data Publishing) error {
+func (pub *Pub) pushaction(ctx context.Context, s *Session, exchange, routing string, data Publishing) error {
 	if data.Headers == nil {
 		data.Headers = amqp.Table{}
 	}
 	data.DeliveryMode = amqp.Persistent
-	return s.ch.Publish(
+	return s.ch.PublishWithContext(
+		ctx,
 		exchange, routing, false, false, amqp.Publishing(data),
 	)
 }
