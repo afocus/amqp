@@ -63,7 +63,7 @@ func (clt *Client) getSession() (*Session, error) {
 }
 
 // AutoReconnecter 重连实现接口
-// github.com/streadway/amqp 不自带重连 这里需要实现下
+// github.com/rabbitmq/amqp091-go 不自带重连 这里需要实现下
 type AutoReconnecter interface {
 	Reconnect() (*amqp.Channel, error)
 }
