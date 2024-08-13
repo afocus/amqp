@@ -44,7 +44,12 @@ func (d Delivery) Accpet(flag bool) error {
 }
 
 func (clt *Client) getSession() (*Session, error) {
-	c, err := amqp.Dial(clt.dsn)
+	config := amqp.Config{
+		Properties: amqp.NewConnectionProperties(),
+	}
+	name, _ := os.Hostname()
+	config.Properties.SetClientConnectionName(name)
+	c, err := amqp.DialConfig(clt.dsn, config)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +168,11 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 	if sub.qos > 0 {
 		_ = ch.Qos(sub.qos, 0, false)
 	}
-	msgs, err := ch.Consume(sub.queue, os.Args[0], false, false, false, false, nil)
+	consumerName, _ := os.Hostname()
+	if consumerName == "" {
+		consumerName = os.Args[0]
+	}
+	msgs, err := ch.Consume(sub.queue, consumerName, false, false, false, false, nil)
 	if err != nil {
 		return err
 	}
