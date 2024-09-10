@@ -69,9 +69,9 @@ type AutoReconnecter interface {
 }
 
 type Exchange struct {
-	Name       string
-	RoutingKey string
-	Args       map[string]any
+	Name          string
+	RoutingKey    string
+	QueueBindArgs map[string]any
 }
 type Sub struct {
 	clt       *Client
@@ -85,6 +85,8 @@ type Sub struct {
 	exclusive   bool
 	idleTimeout time.Duration
 	_started    int32
+	//
+	declareArgs map[string]any
 }
 
 func (clt *Client) Sub(queue, exchange, routing string) *Sub {
@@ -100,6 +102,20 @@ func (clt *Client) Subs(queue string, exchanges []Exchange) *Sub {
 		idleTimeout: time.Hour,
 	}
 	return rev
+}
+
+func (clt *Client) SubsDeadQueue(queue string, declareArgs map[string]any, exchanges []Exchange) error {
+	sub := &Sub{
+		exchanges:   exchanges,
+		queue:       queue,
+		clt:         clt,
+		declareArgs: declareArgs,
+	}
+	sess, err := sub.clt.getSession()
+	if err != nil {
+		return err
+	}
+	return sub.bind(sess.ch, true)
 }
 
 func (sub *Sub) SetTemp(v bool) {
@@ -118,7 +134,7 @@ func (sub *Sub) reconnect() {
 	for {
 		sess, err := sub.clt.getSession()
 		if err == nil {
-			err = sub.bind(sess.ch)
+			err = sub.bind(sess.ch, false)
 			sess.conn.Close()
 		}
 		if err != nil {
@@ -143,7 +159,7 @@ func (sub *Sub) GetMessages() <-chan interface{} {
 
 var errConsumeAutoClose = errors.New("consume auto close")
 
-func (sub *Sub) bind(ch *amqp.Channel) error {
+func (sub *Sub) bind(ch *amqp.Channel, onlybind bool) error {
 	defer ch.Close()
 	// 声明队列，如果队列不存在则创建
 	// 默认durable=true 持久化存储
@@ -154,17 +170,20 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 		durable = false
 	}
 	if _, err := ch.QueueDeclare(
-		sub.queue, durable, autodel, sub.exclusive, false, nil,
+		sub.queue, durable, autodel, sub.exclusive, false, sub.declareArgs,
 	); err != nil {
 		return err
 	}
 	for _, ext := range sub.exchanges {
 		// 绑定队列到交换机 以便从指定交换机获取数据
 		if err := ch.QueueBind(
-			sub.queue, ext.RoutingKey, ext.Name, false, ext.Args,
+			sub.queue, ext.RoutingKey, ext.Name, false, ext.QueueBindArgs,
 		); err != nil {
 			return err
 		}
+	}
+	if onlybind {
+		return nil
 	}
 	if sub.qos > 0 {
 		_ = ch.Qos(sub.qos, 0, false)
