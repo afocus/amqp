@@ -71,6 +71,7 @@ type AutoReconnecter interface {
 type Exchange struct {
 	Name       string
 	RoutingKey string
+	Args       map[string]any
 }
 type Sub struct {
 	clt       *Client
@@ -160,7 +161,7 @@ func (sub *Sub) bind(ch *amqp.Channel) error {
 	for _, ext := range sub.exchanges {
 		// 绑定队列到交换机 以便从指定交换机获取数据
 		if err := ch.QueueBind(
-			sub.queue, ext.RoutingKey, ext.Name, false, nil,
+			sub.queue, ext.RoutingKey, ext.Name, false, ext.Args,
 		); err != nil {
 			return err
 		}
